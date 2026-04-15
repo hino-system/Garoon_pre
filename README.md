@@ -26,6 +26,7 @@
 - [Architecture](docs/architecture.md)
 - [Decisions](docs/decisions.md)
 - [Testing](docs/testing.md)
+- [Integration](docs/integration.md)
 ---
 
 ## アプリ概要
@@ -68,6 +69,78 @@
 
 ---
 
+## 動作モード
+
+本アプリは、ログイン画面から利用モードを切り替えて起動できます。
+
+### サーバーモード
+ローカル API サーバーへ接続して動作するモードです。  
+API を含めた実際の通信確認をしたい場合に利用します。
+
+接続先は次の2種類です。
+
+- エミュレーター: `http://10.0.2.2:3000/`
+- USB 実機: `http://localhost:3000/`
+
+### ローカルモード
+アプリ内部のローカルデータのみで動作するモードです。  
+サーバーを起動せずに、ログイン、スケジュール、掲示板の確認ができます。
+
+ローカルモードでは、アプリ内部に保存される `local_mock_state.json` を使用します。  
+このファイルが存在しない場合は、seed データから初期状態を再生成します。  
+また、保存済みデータは `reset()` によって初期状態へ戻すことができます。
+
+---
+
+## アプリの使い方
+
+### 1. アプリ起動
+アプリを起動するとログイン画面が表示されます。
+
+### 2. モード選択
+ログイン画面で次のいずれかを選択します。
+
+- サーバーを使う
+- ローカルのみ
+
+サーバーを使う場合は、続けて接続先を選択します。
+
+- エミュレーター
+- USB実機
+
+### 3. ログイン
+ユーザーIDとパスワードを入力してログインします。
+
+ローカルモードでは、seed に含まれる固定ユーザー(1 ~ 33)でログインできます。  
+例:
+
+- `1 / 1`
+- `2 / 2`
+- `3 / 3`
+
+
+---
+
+## ローカルデータについて
+
+ローカルモードでは、次のようなデータをアプリ内部に保存します。
+
+- users
+- schedules
+- boardCategories
+- boardPosts
+
+boardPosts にはコメント情報も含まれます。
+
+### ローカルデータの初期化方法
+
+#### 方法1: アプリデータ削除
+端末またはエミュレーターの設定画面から、対象アプリのデータを削除してください。  
+次回起動時に seed データから再生成されます。
+
+#### 方法2: adb で削除
+複数デバイスが接続されている場合は `-s` を付けて対象を指定してください。
+
 ## 技術スタック
 
 ### Android / UI
@@ -104,8 +177,6 @@
 
 ---
 
-## アーキテクチャ
-
 ## モジュール構成
 
 - `app`
@@ -134,84 +205,6 @@
   スケジュールのような業務データの保存と参照
 
 この方針により、設定値と業務データを分離し、ローカルキャッシュの役割を明確化しました。
-
-### スケジュール機能の方針
-
-スケジュール機能は、`Room` をローカルの source of truth とする構成に寄せています。
-
-- 一覧系は Room の `Flow` を監視
-- 同期処理で API 結果を Room に反映
-- ViewModel は DB 監視 + 同期を組み合わせて UI を更新
-
-これにより、責務が API 直読み中心の構成より整理され、オフライン時にも直近データを扱いやすくしています。
-
----
-
-## 工夫した点
-
-### 1. DataStore と Room の責務を分離したこと
-当初は軽量な永続化中心でしたが、スケジュールのような業務データについては Room に移行し、設定値と業務データの役割を分離しました。
-
-### 2. 旧 API 依存を減らし、observe / sync ベースへ整理したこと
-スケジュール機能では、互換目的の古い取得 API を段階的に削減し、一覧・詳細ともにローカルキャッシュ前提の構成へ寄せました。
-
-### 3. テストを層ごとに分けて導入したこと
-以下のように、対象に応じてテスト手法を分けています。
-
-- ViewModel のロジック  
-  Unit Test
-- Room DAO  
-  Instrumented Test
-- Compose UI  
-  UI Test
-- Worker  
-  Worker Test
-
-### 4. GitHub Actions による自動化を追加したこと
-ローカル実行だけに依存せず、GitHub 上でも build / test を確認できるようにしました。
-
----
-
-## テスト
-
-現在は以下のテストを導入しています。
-
-### Unit Test
-- `ScheduleListViewModelTest`
-- `HomeMenuViewModelTest`
-- `AvailabilityViewModelTest`
-- `EditScheduleViewModelTest`
-
-### DB Test
-- `ScheduleOccurrenceDaoTest`
-- `ScheduleDetailDaoTest`
-
-### UI Test
-- `HomeSmokeTest`
-
-### Worker Test
-- `SyncTodaySchedulesWorkerTest`
-
-### 今後の拡張
-- UI テストの対象画面追加
-- Repository 層のテスト強化
-- スクリーンショットテスト導入
-- テストケース数の拡充
-
----
-
-## CI
-
-GitHub Actions を用いて、以下の自動実行を設定しています。
-
-### Android CI
-- アプリのビルド
-- Unit Test 実行
-
-### Android Instrumented Tests
-- emulator 上での instrumented test 実行
-
-これにより、ローカル環境だけでなく、GitHub 上でも一定の品質確認ができる状態にしています。
 
 ---
 
@@ -245,22 +238,6 @@ GitHub Actions を用いて、以下の自動実行を設定しています。
 ![](screenshots/board_list_3.png)
 
 ---
-
-## ディレクトリ構成
-.
-├─ .github/
-│  └─ workflows/
-├─ app/
-├─ core/
-├─ feature/
-├─ sync/
-├─ docs/
-├─ screenshots/
-├─ gradle/
-├─ build.gradle.kts
-├─ settings.gradle.kts
-├─ README.md
-└─ gradlew
 
 ## 開発環境
 

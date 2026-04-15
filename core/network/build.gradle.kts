@@ -19,6 +19,8 @@ android {
 }
 
 dependencies {
+    implementation(project(":core:session"))
+
     implementation(libs.hilt.android)
     kapt(libs.hilt.compiler)
     implementation(libs.retrofit)

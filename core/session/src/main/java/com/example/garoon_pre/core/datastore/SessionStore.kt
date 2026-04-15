@@ -2,8 +2,8 @@ package com.example.garoon_pre.core.datastore
 
 import android.content.Context
 import androidx.datastore.core.DataStore
-import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStoreFile
@@ -18,10 +18,30 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
+enum class ConnectionMode {
+    SERVER,
+    LOCAL
+}
+
+enum class ServerTarget {
+    EMULATOR,
+    USB
+}
+
+data class ConnectionSettings(
+    val mode: ConnectionMode = ConnectionMode.SERVER,
+    val serverTarget: ServerTarget = ServerTarget.EMULATOR
+)
+
 @Singleton
 class SessionStore @Inject constructor(
     @ApplicationContext context: Context
 ) {
+    companion object {
+        const val USB_DEBUG_API_BASE_URL = "http://localhost:3000/"
+        const val EMULATOR_API_BASE_URL = "http://10.0.2.2:3000/"
+    }
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val dataStore: DataStore<Preferences> =
@@ -38,6 +58,10 @@ class SessionStore @Inject constructor(
     private val department2Key = stringPreferencesKey("department_2")
     private val positionKey = stringPreferencesKey("position")
     private val roleKey = stringPreferencesKey("role")
+    private val authUserIdKey = stringPreferencesKey("auth_user_id")
+    private val connectionModeKey = stringPreferencesKey("connection_mode")
+    private val serverTargetKey = stringPreferencesKey("server_target")
+
     private val availabilitySelectionOwnerUserIdKey =
         stringPreferencesKey("availability_selection_owner_user_id")
     private val availabilitySelectedUserIdsKey =
@@ -50,8 +74,6 @@ class SessionStore @Inject constructor(
         stringPreferencesKey("availability_selected_department")
     private val availabilitySelectedSectionKey =
         stringPreferencesKey("availability_selected_section")
-
-    private val authUserIdKey = stringPreferencesKey("auth_user_id")
 
     val authUserIdFlow: Flow<String> = dataStore.data
         .map { prefs -> prefs[authUserIdKey].orEmpty() }
@@ -84,6 +106,40 @@ class SessionStore @Inject constructor(
     val roleFlow: Flow<String> = dataStore.data
         .map { prefs -> prefs[roleKey].orEmpty() }
         .distinctUntilChanged()
+
+    val connectionSettingsFlow: Flow<ConnectionSettings> = dataStore.data
+        .map { prefs ->
+            ConnectionSettings(
+                mode = prefs[connectionModeKey]
+                    ?.let { value -> runCatching { ConnectionMode.valueOf(value) }.getOrNull() }
+                    ?: ConnectionMode.SERVER,
+                serverTarget = prefs[serverTargetKey]
+                    ?.let { value -> runCatching { ServerTarget.valueOf(value) }.getOrNull() }
+                    ?: ServerTarget.EMULATOR
+            )
+        }
+        .distinctUntilChanged()
+
+    suspend fun getConnectionSettings(): ConnectionSettings {
+        return connectionSettingsFlow.first()
+    }
+
+    suspend fun saveConnectionSettings(
+        mode: ConnectionMode,
+        serverTarget: ServerTarget
+    ) {
+        dataStore.edit { prefs ->
+            prefs[connectionModeKey] = mode.name
+            prefs[serverTargetKey] = serverTarget.name
+        }
+    }
+
+    suspend fun getServerBaseUrl(): String {
+        return when (getConnectionSettings().serverTarget) {
+            ServerTarget.EMULATOR -> EMULATOR_API_BASE_URL
+            ServerTarget.USB -> USB_DEBUG_API_BASE_URL
+        }
+    }
 
     suspend fun saveSession(
         authUserId: String,
@@ -144,10 +200,6 @@ class SessionStore @Inject constructor(
             prefs.remove(positionKey)
             prefs.remove(roleKey)
             prefs.remove(authUserIdKey)
-
-            // availabilitySelectionOwnerUserIdKey と
-            // availabilitySelectedUserIdsKey は消さない
-            // 同じユーザーで再ログインした時に前回表示を復元するため
         }
     }
 
@@ -174,13 +226,10 @@ class SessionStore @Inject constructor(
         }
     }
 
-
-
     suspend fun loadAvailabilitySelectedDate(ownerUserId: String): String? {
         val prefs = dataStore.data.first()
         val savedOwnerUserId = prefs[availabilitySelectionOwnerUserIdKey].orEmpty()
         if (savedOwnerUserId != ownerUserId) return null
-
         return prefs[availabilitySelectedDateKey]?.takeIf { it.isNotBlank() }
     }
 
@@ -188,7 +237,6 @@ class SessionStore @Inject constructor(
         val prefs = dataStore.data.first()
         val savedOwnerUserId = prefs[availabilitySelectionOwnerUserIdKey].orEmpty()
         if (savedOwnerUserId != ownerUserId) return null
-
         return prefs[availabilityWeekStartDateKey]?.takeIf { it.isNotBlank() }
     }
 
@@ -196,7 +244,6 @@ class SessionStore @Inject constructor(
         val prefs = dataStore.data.first()
         val savedOwnerUserId = prefs[availabilitySelectionOwnerUserIdKey].orEmpty()
         if (savedOwnerUserId != ownerUserId) return null
-
         return prefs[availabilitySelectedDepartmentKey]?.takeIf { it.isNotBlank() }
     }
 
@@ -204,7 +251,6 @@ class SessionStore @Inject constructor(
         val prefs = dataStore.data.first()
         val savedOwnerUserId = prefs[availabilitySelectionOwnerUserIdKey].orEmpty()
         if (savedOwnerUserId != ownerUserId) return null
-
         return prefs[availabilitySelectedSectionKey]?.takeIf { it.isNotBlank() }
     }
 }

@@ -1,160 +1,264 @@
 # Testing
 
-## 概要
+## テスト戦略
 
-本プロジェクトでは、対象ごとにテスト手法を分けています。  
-すべてを同じ種類のテストで確認するのではなく、責務に応じて分けることで、テストの意図と保守性を整理しています。
+このプロジェクトでは、**対象ごとに最適な粒度でテストする**ことを方針にしています。  
+すべてを UI テストへ寄せるのではなく、責務に応じて次のように分担しています。
+
+- 純粋ロジック / ViewModel は unit test
+- Room は DAO test
+- Worker は worker test
+- 画面接続確認は Compose UI smoke test
+- CI では実行コストに応じて unit/build と instrumented を分離
+
+目指しているのは、
+
+1. 壊れた場所が分かりやすいこと
+2. 速いテストを普段の確認に使えること
+3. Android 固有の要素は専用テストで押さえること
+
+です。
 
 ---
 
-## テスト方針
+## 1. テストレイヤ別の考え方
 
-### 1. Unit Test
-対象:
-- ViewModel
+### Unit Test
+
+#### 主な対象
+
+- ViewModel の状態遷移
 - 入力検証
-- 状態遷移
-- イベント処理
+- イベント発火
+- 純粋ロジック / utility
 
-目的:
-- 画面ロジックを高速に検証する
-- UI に依存せず状態変化を確認する
-- 失敗時の原因を切り分けやすくする
+#### 目的
 
-使用:
+- UI を起動せずに画面ロジックを高速に確認する
+- 認証なし・保存失敗などの分岐を小さく検証する
+- 失敗原因を ViewModel / utility に絞り込みやすくする
+
+#### 主な使用技術
+
 - JUnit4
 - kotlinx-coroutines-test
 - MockK
 
-### 2. DB Test
-対象:
-- Room DAO
-- query / insert / delete / replace の確認
+### DAO Test
 
-目的:
-- ローカルデータの保存・参照が期待通りか確認する
-- 一覧・詳細・絞り込みの挙動を分離して検証する
+#### 主な対象
 
-使用:
+- Room DAO の query
+- upsert / replace / delete
+- 日付範囲やユーザー絞り込み
+
+#### 目的
+
+- ローカルキャッシュが期待どおり更新されるか確認する
+- UI テストだけでは見えにくい永続層の仕様を独立して確認する
+
+#### 主な使用技術
+
 - Room testing
 - Android instrumented test
 
-### 3. UI Test
-対象:
-- Compose UI
-- 主要画面の起動確認
+### UI Test
 
-目的:
-- 実際の画面起動と最低限の導線確認を行う
-- Compose Test / Hilt / test runner の接続確認を行う
+#### 主な対象
 
-使用:
+- アプリ起動
+- Compose / Hilt / test runner の接続確認
+
+#### 目的
+
+- テスト基盤が壊れていないことを確認する
+- UI テストを追加していくための土台を維持する
+
+#### 主な使用技術
+
 - Compose UI Test
 - Hilt Android Testing
+- `createAndroidComposeRule`
 
-### 4. Worker Test
-対象:
-- WorkManager の Worker
+### Worker Test
 
-目的:
-- バックグラウンド処理の成功 / retry を確認する
-- 同期処理の責務を UI と分けて検証する
+#### 主な対象
 
-使用:
+- `CoroutineWorker` の戻り値
+- 成功 / retry 分岐
+
+#### 目的
+
+- 同期処理の責務を UI から切り離して検証する
+- Worker 自体のビジネスロジックを単独で確認する
+
+#### 主な使用技術
+
 - WorkManager testing
+- `TestListenableWorkerBuilder`
 - MockK
 
 ---
 
-## 現在導入しているテスト
+## 2. 現在のテスト構成
 
-### Unit Test
+### A. ViewModel / pure Kotlin の unit test
 
-#### `ScheduleListViewModelTest`
-確認内容:
-- 初期ロードで一覧が反映される
-- 認証ユーザー不在時にエラーになる
+#### `feature:home:ui`
 
-#### `HomeMenuViewModelTest`
-確認内容:
-- 週間予定の一覧反映
-- 認証ユーザー不在時のエラー
-- ダミーイベント押下時のメッセージ
+- `HomeMenuViewModelTest`
+  - 週間予定の反映
+  - ログイン情報がない場合の扱い
+  - ダミー機能押下時のメッセージ
 
-#### `AvailabilityViewModelTest`
-確認内容:
-- 保存済み選択状態の反映
-- ユーザー追加
-- ユーザー削除
+#### `feature:availability:ui`
 
-#### `EditScheduleViewModelTest`
-確認内容:
-- 詳細データの初期反映
-- 自分以外の予定編集拒否
-- 更新成功時の保存イベント
+- `AvailabilityViewModelTest`
+  - 保存済み preference の復元
+  - ユーザー一覧の読み込み
+  - 選択ユーザーの追加 / 削除
+  - 表示対象週の再構築
 
----
+#### `feature:schedule:ui`
 
-## DB Test
+- `EditScheduleViewModelTest`
+  - 詳細データからの初期値反映
+  - 自分以外の予定編集拒否
+  - 更新成功時の saved イベント
 
-### `ScheduleOccurrenceDaoTest`
-確認内容:
-- insert / observeByDate
-- ユーザー絞り込み
-- 期間 + ユーザー絞り込み
-- 対象ユーザーだけ削除
+- `ScheduleListViewModelTest`
+  - 週移動時に同じ曜日列を維持すること
+  - 日付グルーピング結果の整合性
 
-### `ScheduleDetailDaoTest`
-確認内容:
-- 未登録時は null
-- upsert 後に取得できる
-- 同じ ID の置き換え
+#### app module の pure logic
 
----
+- `CalendarPlacementTest`
+  - 時間帯が重なる予定を複数列へ割り付けるロジック
 
-## UI Test
+### B. Room DAO test
 
-### `HomeSmokeTest`
-確認内容:
-- アプリ起動
-- Compose UI Test / Hilt test runner の動作確認
+#### `feature:schedule:data`
 
-現状では、まずテスト基盤が正しく動作することの確認を目的に、最小限の smoke test を置いています。
+- `ScheduleOccurrenceDaoTest`
+  - `observeByDate`
+  - ユーザー絞り込み
+  - 期間絞り込み
+  - 指定ユーザーのみ削除
 
----
+- `ScheduleDetailDaoTest`
+  - 未登録時は `null`
+  - upsert 後に取得できること
+  - 同一 ID の置き換え
 
-## Worker Test
+### C. UI smoke test
 
-### `SyncTodaySchedulesWorkerTest`
-確認内容:
-- Repository 成功時に `Result.success()`
-- Repository 失敗時に `Result.retry()`
+#### `app`
 
----
+- `HomeSmokeTest`
+  - アプリ起動
+  - Hilt test runner の接続
+  - Compose テスト基盤の生存確認
 
-## テストの役割分担
+### D. Worker test
 
-### ViewModel Test を先に厚くしている理由
-ViewModel は画面状態・入力検証・イベント処理などを持つため、  
-UI そのものを操作しなくても、ロジックの品質を高く維持しやすいからです。
+#### `sync`
 
-### DAO Test を別にしている理由
-Room の query は UI テストだけでは追いにくいため、  
-データ保存と取得の正しさを独立して確認するためです。
-
-### UI Test を最小から始めている理由
-UI テストは実行コストが高いため、まずは smoke test を導入し、  
-土台が安定してから対象画面を増やす方針にしています。
-
-### Worker Test を分ける理由
-バックグラウンド処理は ViewModel や UI と責務が異なるため、  
-成功 / retry の挙動を単独で確認できるようにしています。
+- `SyncTodaySchedulesWorkerTest`
+  - Repository 成功時に `Result.success()`
+  - 例外時に `Result.retry()`
 
 ---
 
-## テスト実行例
+## 3. この構成にしている理由
 
-### Unit Test
-./gradlew :feature:schedule:ui:testDebugUnitTest
-./gradlew :feature:home:ui:testDebugUnitTest
-./gradlew :feature:availability:ui:testDebugUnitTest
+### ViewModel test を先に厚くしている理由
+
+このアプリで最も変化しやすいのは、画面状態・入力検証・ユーザー操作に対する反応です。  
+そこを高速に確認できるよう、まず ViewModel の test を厚めにしています。
+
+### DAO test を分けている理由
+
+schedule 一覧は Room を Single Source of Truth に近い形で使っているため、DAO の正しさが UI 表示の土台になります。  
+そのため、永続化の仕様を ViewModel test に混ぜず、DAO 単独で検証しています。
+
+### UI test を smoke から始めている理由
+
+UI テストは価値が大きい一方で、実行コストも高めです。  
+そのため現段階では、まず **「起動・Hilt・Compose テスト基盤が壊れていないか」** を確認する smoke test を置いています。
+
+### Worker test を独立させている理由
+
+バックグラウンド同期は UI とは失敗条件も責務も違います。  
+UI から切り離して `doWork()` の戻り値を検証できる形にしておくと、同期戦略の改善がしやすくなります。
+
+---
+
+## 4. テストデータと test double の考え方
+
+### Repository / SessionStore は MockK で差し替える
+
+ViewModel test では repository や SessionStore を mock に置き換え、
+
+- 正常系
+- 認証なし
+- 例外発生
+- 保存成功 / 失敗
+
+のような分岐を狙って確認します。
+
+### Coroutine test を前提にする
+
+ViewModel は coroutine を使うため、`MainDispatcherRule` を使って `Dispatchers.Main` を test dispatcher へ差し替えています。
+
+### DAO test は in-memory Room に寄せる
+
+永続化の仕様は実際の Room 挙動に近い形で確認したいため、mock ではなく DAO の実体で確かめます。
+
+### Worker test は builder ベースで構築する
+
+Worker は `TestListenableWorkerBuilder` で作成し、WorkManager 実行環境そのものではなく、Worker ロジックに焦点を当てています。
+
+---
+
+## 5. CI での実行方針
+
+CI は実行コストに応じて 2 本に分けています。
+
+### `android-ci.yml`
+
+役割:
+
+- app assemble
+- ViewModel 中心の unit test
+- 速い確認を pull request / push で回す
+
+主な実行内容:
+
+- `:app:assembleApiDebug`
+- `:feature:schedule:ui:testDebugUnitTest`
+- `:feature:home:ui:testDebugUnitTest`
+- `:feature:availability:ui:testDebugUnitTest`
+
+### `android-instrumented-tests.yml`
+
+役割:
+
+- emulator 上での instrumented test 実行
+- Compose UI / DAO / Worker を含む Android 実機系テストの検証
+
+主な実行内容:
+
+- `:app:connectedApiDebugAndroidTest`
+- `:feature:schedule:data:connectedDebugAndroidTest`
+- `:sync:connectedDebugAndroidTest`
+
+この分離により、毎回重いテストを全部回さずに、**速いフィードバックと Android 固有テストの両立**を狙っています。
+
+---
+
+## 6. ローカル実行コマンド
+
+### build
+
+```bash
+./gradlew :app:assembleApiDebug
